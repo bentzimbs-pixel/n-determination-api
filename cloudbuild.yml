@@ -1,0 +1,56 @@
+name: Cloud Build – Deploy to Cloud Run
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+    inputs:
+      artifacts_bucket:
+        description: "Override artifacts bucket"
+        required: false
+      api_key:
+        description: "Override API key"
+        required: false
+
+jobs:
+  build-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # needed for Workload Identity Federation
+
+    env:
+      PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+      REGION: ${{ secrets.GCP_REGION }}
+      SERVICE: ${{ secrets.SERVICE_NAME }}
+      ARTIFACT_REPO: ${{ secrets.ARTIFACT_REPO }}
+      ARTIFACTS_BUCKET: ${{ github.event.inputs.artifacts_bucket || secrets.ARTIFACTS_BUCKET }}
+      API_KEY: ${{ github.event.inputs.api_key || secrets.API_KEY }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Configure Artifact Registry docker auth
+        run: |
+          gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev -q
+
+      - name: Submit Cloud Build
+        run: |
+          SUBS="_SERVICE=${SERVICE},_REGION=${REGION},_ARTIFACT_REPO=${ARTIFACT_REPO},_ARTIFACTS_BUCKET=${ARTIFACTS_BUCKET},_API_KEY=${API_KEY}"
+          gcloud builds submit \
+            --project ${PROJECT_ID} \
+            --config cloudbuild.yaml \
+            --substitutions "$SUBS" \
+            .
